@@ -19,7 +19,7 @@ from pathlib import Path
 import sys
 
 from config import load_config, AppConfig
-from chemistry import get_pyscf_driver, run_electronic_structure, get_pyscf_molecule_and_calculation, run_pyscf_calculation
+from chemistry import get_pyscf_driver, run_pyscf_calculation
 from visualization import plot_mo_coefficients, visualize_mo_3d, get_basis_labels
 
 def print_versions():

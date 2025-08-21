@@ -49,69 +49,6 @@ def get_pyscf_driver(config: MoleculeConfig) -> PySCFDriver:
     print(f"PySCFDriver configured for: {atom_str}, Basis: {config.basis}, Unit: {driver.unit}")
     return driver
 
-def run_electronic_structure(driver: PySCFDriver) -> Any:
-    """
-    Runs the electronic structure calculation using the driver.
-
-    Args:
-        driver: The configured PySCFDriver.
-
-    Returns:
-        The result object from the driver's run, which contains
-        detailed information about the electronic structure.
-
-    Chemistry Note for Beginners:
-    This step performs a Hartree-Fock calculation (via PySCF). This method finds
-    the best possible arrangement of electrons in *molecular orbitals* (MOs),
-    assuming each electron moves in the average field of all other electrons.
-    The result gives us energies and shapes of these MOs.
-    """
-    print("Running electronic structure calculation with PySCF...")
-    electronic_structure_result = driver.run_pyscf()
-    print("Calculation complete.")
-
-    # run_pyscf() stores the results in private attributes _mol and _calc
-    if not hasattr(driver, '_mol') or not hasattr(driver, '_calc'):
-        raise RuntimeError("PySCF calculation did not result in driver._mol or driver._calc.")
-
-    mol: gto.Mole = driver._mol
-    mf: scf.hf.RHF = driver._calc
-    return mol, mf
-    # # Log some basic results
-    # print(f"orbital coefficients: {electronic_structure_result.raw_result} and number of spatial orbitals: {electronic_structure_result.num_spatial_orbitals}")
-    # mo_coeff = electronic_structure_result.aao_to_mo_coeff
-    # if mo_coeff is not None:
-    #     print(f"Number of molecular orbitals: {mo_coeff.shape[1]}")
-    # else:
-    #     print("MO coefficients not found in results.")
-    # return electronic_structure_result
-
-def get_pyscf_molecule_and_calculation(driver: PySCFDriver):
-    """
-    Extracts the underlying PySCF molecule and calculation objects.
-    These are needed for detailed operations like generating cube files.
-
-    Args:
-        driver: The PySCFDriver, *after* driver.run() has been called.
-
-    Returns:
-        A tuple (mol, mf), where mol is the PySCF molecule object and
-        mf is the PySCF mean-field (SCF) calculation object.
-
-    Raises:
-        RuntimeError: if the driver hasn't run the calculation yet.
-    """
-    if not hasattr(driver, '_mol') or not hasattr(driver, '_calc'):
-         # Attempt to run PySCF if not already done, to populate _mol and _calc
-        print("Driver has not been run, attempting to run run_pyscf()")
-        driver.run_pyscf()
-        if not hasattr(driver, '_mol') or not hasattr(driver, '_calc'):
-            raise RuntimeError("The driver.run() method must be called and complete before accessing PySCF objects.")
-
-    mol: gto.Mole = driver._mol
-    mf: scf.hf.RHF = driver._calc
-    return mol, mf
-
 def run_pyscf_calculation(driver: PySCFDriver) -> Tuple[gto.Mole, scf.hf.RHF]:
     """
     Runs the underlying PySCF calculation and returns the PySCF molecule
