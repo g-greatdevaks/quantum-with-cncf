@@ -3,20 +3,31 @@
 Main script for the Molecular Orbital Visualization Demo.
 KubeCon EU 2025 - Quantum Curious
 
-This script demonstrates:
-1.  Loading molecule configuration.
-2.  Running a quantum chemistry calculation using Qiskit Nature with PySCF.
-3.  Visualizing Molecular Orbital coefficients with Matplotlib.
-4.  Generating interactive 3D visualizations of Molecular Orbitals using py3Dmol.
+L100: Classical MO visualization
+L150: Local Quantum Simulation with VQE
 """
 import qiskit
+from qiskit_algorithms.minimum_eigensolvers import VQE
+from qiskit_algorithms.optimizers import SLSQP
+from qiskit_aer.primitives import Estimator as AerEstimator
+import qiskit_aer
+
+# Qiskit Nature imports
 import qiskit_nature
+from qiskit_nature.second_q.drivers import PySCFDriver
+# DistanceUnit is in chemistry.py, not needed here
+from qiskit_nature.second_q.problems import ElectronicStructureProblem
+from qiskit_nature.second_q.mappers import JordanWignerMapper
+from qiskit_nature.second_q.circuit.library import UCCSD
+
 import pyscf
 import numpy as np
 import py3Dmol
 import os
 from pathlib import Path
 import sys
+import time
+import traceback
 
 from config import load_config, AppConfig
 from chemistry import get_pyscf_driver, run_pyscf_calculation
@@ -27,71 +38,131 @@ def print_versions():
     print("--- Library Versions ---")
     print(f"  Python: {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
     print(f"  Qiskit: {qiskit.__version__}")
-    # Qiskit Nature version check needs to be compatible with older and newer versions
-    try:
-        import qiskit_nature.version
-        print(f"  Qiskit Nature: {qiskit_nature.version.VERSION}")
-    except (ImportError, AttributeError):
-        print(f"  Qiskit Nature: {qiskit_nature.__version__}")
+    print(f"  Qiskit Aer: {qiskit_aer.__version__}")
+    import qiskit_algorithms
+    print(f"  Qiskit Algorithms: {qiskit_algorithms.__version__}")
+    print(f"  Qiskit Nature: {qiskit_nature.__version__}")
+    # assert qiskit_nature.__version__ == "0.7.2"
     print(f"  PySCF: {pyscf.__version__}")
     print(f"  NumPy: {np.__version__}")
     print(f"  py3Dmol: {py3Dmol.__version__}")
     print("------------------------")
+
+def run_vqe_simulation(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mole, mf: pyscf.scf.hf.RHF):
+    """
+    L150: Runs VQE simulation for the molecule.
+    """
+    print("\n--- Starting L150: VQE Quantum Simulation ---")
+    start_time = time.time()
+
+    # 1. Create ElectronicStructureProblem
+    print("  Creating ElectronicStructureProblem...")
+    problem = driver.run()
+    print("  ElectronicStructureProblem instance created.")
+
+    # 2. Generate Second Quantized Operators
+    try:
+        print("  Calling problem.second_q_ops()...")
+        second_q_ops = problem.second_q_ops()
+        if not second_q_ops:
+            print("  Error: second_q_ops() returned empty list or None.")
+            return None
+        # The first operator in the list is the main electronic Hamiltonian.
+        hamiltonian = second_q_ops[0]
+        print("  Second quantized operators obtained.")
+    except Exception as e:
+        print(f"  Error calling second_q_ops(): {e}")
+        traceback.print_exc()
+        return None
+
+    # 3. Define the Qubit Mapper and map the Hamiltonian
+    mapper = JordanWignerMapper()
+    try:
+        print("  Mapping Hamiltonian to qubits...")
+        qubit_op = mapper.map(hamiltonian)
+        if qubit_op is None:
+             print("  Error: mapper.map() returned None")
+             return None
+        print(f"  Qubit Hamiltonian created with {qubit_op.num_qubits} qubits.")
+    except Exception as e:
+        print(f"  Error during mapper.map(): {e}")
+        traceback.print_exc()
+        return None
+
+    # 4. Ansatz Setup
+    num_spatial_orbitals = mf.mo_coeff.shape[1]
+    num_particles = (mol.nelec[0], mol.nelec[1])
+    ansatz = UCCSD(num_spatial_orbitals, num_particles, mapper)
+
+    # 5. Estimator
+    estimator = AerEstimator()
+
+    # 6. Optimizer
+    optimizer = SLSQP(maxiter=200)
+
+    # 7. VQE Solver
+    vqe_solver = VQE(estimator=estimator, ansatz=ansatz, optimizer=optimizer)
+
+    # 8. Run VQE
+    print("  Running VQE.compute_minimum_eigenvalue...")
+    vqe_result = vqe_solver.compute_minimum_eigenvalue(qubit_op)
+    end_time = time.time()
+    print(f"  VQE calculation finished in {end_time - start_time:.2f} seconds.")
+
+    # 9. Display Results
+    vqe_energy = vqe_result.optimal_value
+    print("\n--- VQE Results ---")
+    print(f"  VQE Ground State Energy: {vqe_energy:.6f} Hartree")
+    print(f"  Hartree-Fock Energy (from PySCF): {mf.e_tot:.6f} Hartree")
+    energy_diff = vqe_energy - mf.e_tot
+    print(f"  VQE Energy - HF Energy: {energy_diff:.6f} Hartree")
+
+    if vqe_energy > mf.e_tot + 1e-4:
+         print("  Note: VQE energy is slightly higher than HF. Optimization might need more iterations or a different starting point.")
+    elif vqe_energy < mf.e_tot - 1e-9:
+         print(f"  VQE found a lower energy, indicating electron correlation effects are captured.")
+    else:
+         print("  VQE energy is very close to HF energy.")
+
+    print("--- L150 Complete ---")
+    return vqe_result
 
 def main():
     """
     Main pipeline for the demo.
     """
     print_versions()
-
-    # Load configuration
     config: AppConfig = load_config()
     print(f"Loaded Configuration: {config}")
-
-    # Ensure output directory exists
     output_dir = Path(config.visualization.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # --- Step 1: Get Driver ---
+    # --- L100: Classical Calculations & Visualization ---
+    print("\n--- Starting L100: Classical Calculations & Visualization ---")
     driver = get_pyscf_driver(config.molecule)
-
-    # --- Step 2: Run PySCF Calculation ---
-    # electronic_structure_result = run_electronic_structure(driver)
     try:
         mol, mf = run_pyscf_calculation(driver)
     except RuntimeError as e:
         print(f"Error during PySCF calculation: {e}")
         return
 
-    # Extract MO coefficients (shape: [num_basis_functions, num_orbitals])
-    # The MO coefficients are stored in the 'mo_coeff' attribute of the PySCF mean-field object
     mo_coeffs = mf.mo_coeff
     if mo_coeffs is None:
         print("Error: Could not retrieve mo_coeff from PySCF result (mf).")
         return
 
-    # --- Step 3: Extract MO Coefficients ---
-    # The MO coefficients are stored in the 'mo_coeff' attribute of the PySCF mean-field object
-    mo_coeffs = mf.mo_coeff
-    if mo_coeffs is None:
-        print("Error: Could not retrieve mo_coeff from PySCF result (mf).")
-        return
-
-    print(f"MO coefficient matrix shape: {mo_coeffs.shape}")
-    num_orbitals = mo_coeffs.shape[1]
-
-    # --- Step 4: 2D Bar Plot of Coefficients ---
     basis_labels = get_basis_labels(mol)
     plot_mo_coefficients(mo_coeffs, config.visualization, labels=basis_labels)
 
-    # --- Step 5: 3D Advanced MO Visualization ---
+    num_orbitals = mo_coeffs.shape[1]
     num_orbitals_3d = min(2, num_orbitals)
     for i in range(num_orbitals_3d):
-        print(f"\nGenerating 3D view for MO {i + 1}...")
         visualize_mo_3d(mol, mo_coeffs, orb_index=i, config=config.visualization)
+    print("--- L100 Complete ---")
+    print(f"  Classical outputs are saved in the '{config.visualization.output_dir}' directory.")
 
-    print("\n--- Demo Complete ---")
-    print(f"Outputs are saved in the '{config.visualization.output_dir}' directory.")
+    # --- L150: VQE Quantum Simulation ---
+    run_vqe_simulation(driver, config, mol, mf)
 
 if __name__ == "__main__":
     main()
