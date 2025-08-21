@@ -1,35 +1,31 @@
 # visualization.py
 """
-Functions for visualizing molecular orbitals.
-- 2D bar plots of MO coefficients
-- 3D isosurface plots of MOs using py3Dmol
+This module contains functions for generating visualizations
+related to the quantum chemistry calculations, including:
+- 2D bar plots of Molecular Orbital coefficients.
+- 3D isosurface plots of Molecular Orbitals using py3Dmol.
+- Plots of quantum circuits.
 """
 import numpy as np
 import matplotlib.pyplot as plt
 import py3Dmol
 from pathlib import Path
-import os
 from typing import Any
-
 from pyscf import gto
 from pyscf.tools import cubegen
-
 from config import VisualizationConfig
+import traceback
 
 def plot_mo_coefficients(mo_coefficients: np.ndarray, config: VisualizationConfig, labels: list = None):
     """
-    Generates bar plots for the coefficients of the first few molecular orbitals.
+    Generates and saves bar plots for the coefficients of each atomic orbital
+    contributing to the first few molecular orbitals.
 
     Args:
-        mo_coefficients: Array of MO coefficients (typically shape [n_basis, n_orbitals]).
-        config: Visualization configuration.
-        labels: Optional labels for the basis functions.
-
-    Chemistry Note for Beginners:
-    Molecular Orbitals (MOs) are formed by combining Atomic Orbitals (AOs).
-    Each bar in the plot shows how much each AO contributes to a specific MO.
-    For H2, the lowest energy MO (the bonding orbital) will show roughly equal
-    contributions from the 1s orbitals of both Hydrogen atoms.
+        mo_coefficients (np.ndarray): The matrix of MO coefficients, typically
+                                     of shape (num_basis_functions, num_orbitals).
+        config (VisualizationConfig): Visualization settings.
+        labels (list, optional): Descriptive labels for each basis function.
     """
     output_dir = Path(config.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -41,7 +37,8 @@ def plot_mo_coefficients(mo_coefficients: np.ndarray, config: VisualizationConfi
 
     for i in range(n_plots):
         plt.figure(figsize=(10, 5))
-        coeffs = mo_coefficients[:, i]
+        coeffs = mo_coefficients[:, i] # Coefficients for the i-th MO
+
         if labels:
             plt.bar(labels, coeffs)
         else:
@@ -55,11 +52,19 @@ def plot_mo_coefficients(mo_coefficients: np.ndarray, config: VisualizationConfi
         plt.tight_layout()
         plot_filename = output_dir / f"mo_{i+1}_coeffs.png"
         plt.savefig(plot_filename)
-        print(f"Saved MO {i+1} coefficient plot to {plot_filename}")
+        print(f"  Saved MO {i+1} coefficient plot to {plot_filename}")
         plt.close()
 
 def get_basis_labels(mol: gto.Mole) -> list[str]:
-    """Creates descriptive labels for each basis function."""
+    """
+    Creates human-readable labels for each atomic basis function in the molecule.
+
+    Args:
+        mol (gto.Mole): The PySCF molecule object.
+
+    Returns:
+        list[str]: A list of labels.
+    """
     labels = []
     for i in range(mol.nbas):
         atom_symbol = mol.atom_symbol(mol.bas_atom(i))
@@ -67,30 +72,31 @@ def get_basis_labels(mol: gto.Mole) -> list[str]:
         l = mol.bas_angular(i)
         l_map = {0: 's', 1: 'p', 2: 'd', 3: 'f'}
         ang = l_map.get(l, str(l))
+        
         # For higher angular momentum, PySCF has multiple functions per basis shell
         n_functions = mol.bas_len_cart(i) # Number of cartesian functions
         if n_functions == 1:
             labels.append(f"{atom_symbol}{atom_id+1} {ang}")
         else:
-            # e.g., px, py, pz
-            if l == 1:
-                suffixes = ['x', 'y', 'z']
-            else: # d, f, etc. have more complex cartesian forms
-                suffixes = [f"{j}" for j in range(n_functions)]
+            if l == 1: suffixes = ['x', 'y', 'z'] # e.g., px, py, pz
+            else: suffixes = [f"{j}" for j in range(n_functions)]  # d, f, etc. have more complex cartesian forms
             for j in range(n_functions):
                  labels.append(f"{atom_symbol}{atom_id+1} {ang}{suffixes[j]}")
     return labels
 
-
 def visualize_mo_3d(mol: gto.Mole, mo_coeff: np.ndarray, orb_index: int, config: VisualizationConfig):
     """
-    Renders a 3D view of a given molecular orbital and saves it as an HTML file.
+    Generates a 3D visualization of a specific molecular orbital and saves it as an HTML file.
+
+    This function uses PySCF's cubegen to create a .cube file representing the
+    orbital's spatial distribution, and then uses py3Dmol to render an interactive
+    3D view in HTML.
 
     Args:
-        mol: PySCF molecule object.
-        mo_coeff: MO coefficients array [n_basis, n_orbitals].
-        orb_index: Index of the orbital to visualize (0-based).
-        config: Visualization configuration.
+        mol (gto.Mole): The PySCF molecule object.
+        mo_coeff (np.ndarray): The MO coefficient matrix.
+        orb_index (int): The 0-based index of the molecular orbital to visualize.
+        config (VisualizationConfig): Visualization settings.
 
     Chemistry Note for Beginners:
     This function generates a 3D grid of values representing the electron density
@@ -105,25 +111,51 @@ def visualize_mo_3d(mol: gto.Mole, mo_coeff: np.ndarray, orb_index: int, config:
     cube_filename = output_dir / f"mo_{orb_index+1}.cube"
 
     print(f"Generating cube file for MO {orb_index + 1}: {cube_filename}")
-    # cubegen.orbital expects the coefficients for *one* orbital, shape (n_basis,)
+    # Generate the cube file for the selected MO.
+    # cubegen.orbital expects the coefficients for *one* orbital, shape (n_basis,).
     cubegen.orbital(mol, str(cube_filename), mo_coeff[:, orb_index], nx=60, ny=60, nz=60)
     print("Cube file generated.")
 
+    # Read the cube data.
     with open(cube_filename, 'r') as f:
         cube_data = f.read()
 
+    # Create the py3Dmol view.
     view = py3Dmol.view(width=600, height=400)
+    # Add the volumetric data for the isosurface.
+    # Positive and negative phases of the wavefunction are shown in different colors.
     view.addVolumetricData(cube_data, "cube", {'isoval': config.isoval, 'color': "blue", 'opacity': 0.8})
     view.addVolumetricData(cube_data, "cube", {'isoval': -config.isoval, 'color': "red", 'opacity': 0.8})
 
-    # Add molecule structure
+    # Add the molecular structure (atoms and bonds).
     view.addModel(gto.tostring(mol), "xyz")
     view.setStyle({'stick': {'radius': 0.1}, 'sphere': {'scale': 0.25}})
     view.zoomTo()
 
+    # Save the visualization as an HTML file.
     html_filename = output_dir / f"mo_{orb_index+1}_3d.html"
     with open(html_filename, 'w') as f:
-        # Get the HTML content from py3Dmol
         f.write(view._make_html())
-    print(f"Saved 3D visualization to {html_filename} - Open this file in a browser.")
+    print(f"  Saved 3D visualization to {html_filename}")
 
+def draw_circuit(circuit, filename, output_dir):
+    """
+    Draws a Qiskit quantum circuit and saves it to a file.
+
+    Args:
+        circuit (QuantumCircuit): The Qiskit circuit to draw.
+        filename (str): The name of the output image file.
+        output_dir (str): The directory to save the image in.
+    """
+    try:
+        output_path = Path(output_dir) / filename
+        # Using 'mpl' output for a matplotlib-generated image.
+        # 'fold=-1' prevents line wrapping for wider circuits.
+        # Custom styling for UCCSD and HartreeFock gates for clarity.
+        style = {'displaycolor': {'UCCSD': ('#c2e0c6', '#000000'), 'HartreeFock': ('#a6cbe3', '#000000')}}
+        circuit.draw(output='mpl', style=style, fold=-1).savefig(output_path, bbox_inches='tight')
+        print(f"  Circuit diagram saved to {output_path}")
+        plt.close() # Close the matplotlib figure to free memory.
+    except Exception as e:
+        print(f"  Failed to draw circuit {filename}: {e}")
+        traceback.print_exc()

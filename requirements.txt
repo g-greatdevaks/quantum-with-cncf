@@ -1,24 +1,31 @@
+# requirements.txt
+# Python 3.13.3
+
 # Core Qiskit
-qiskit>=1.0.0,<2.0.0
-qiskit-aer
+qiskit==1.4.4
+
+# Qiskit Aer Simulator
+qiskit-aer==0.17.1
 
 # Qiskit Application Modules
-qiskit-algorithms
-qiskit-nature
+qiskit-algorithms==0.3.1
+qiskit-nature==0.7.2
 
 # Chemistry Backend
-pyscf>=2.5.0
+pyscf==2.10.0
 
 # Visualization
-matplotlib
-py3Dmol>=2.0.0
+matplotlib==3.10.5
+py3Dmol==2.5.2
+pylatexenc==2.10
 
-# Utilities
-numpy
-pydantic
-pyyaml
-ipython # For notebook-like execution if needed
+# Configuration & Utilities
+numpy==2.3.2
+pydantic==2.11.7
+pydantic-settings==2.10.1
+pyyaml==6.0.2
+ipython==9.4.0
 
-# Table
-tabulate
-pandas
+# For Optimizer Comparison Table
+tabulate==0.9.0
+pandas==2.3.2

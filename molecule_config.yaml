@@ -1,11 +1,35 @@
+# molecule_config.yaml
+# This file defines the default parameters for the simulation.
+# These settings can be overridden by environment variables.
+
 molecule:
-  atom_labels: ["H", "H"]
-  atom_distance: 0.735
-  basis: "sto3g"
-  charge: 0
-  spin: 0
+  atom_labels: ["H", "H"] # The atoms in the molecule
+  atom_distance: 0.735 # Bond distance in Angstroms
+  basis: "sto3g" # Basis set for atomic orbitals (e.g., "sto3g", "6-31g")
+  charge: 0 # Total charge of the molecule
+  spin: 0 # Spin multiplicity (0 for singlet, 1 for doublet, etc.)
 
 visualization:
-  max_orbitals_plot: 4
-  isoval: 0.02
-  output_dir: "outputs"
+  max_orbitals_plot: 4 # Number of molecular orbitals to plot in 2D
+  isoval: 0.02 # Isovalue for rendering 3D orbital surfaces
+  output_dir: "outputs" # Directory to save all generated files
+  draw_circuits: True # Whether to generate and save circuit diagrams
+
+optimizers:
+  # List of optimizer algorithms to test in the VQE simulation
+  run: ["COBYLA", "SLSQP", "SPSA", "L-BFGS-B"]
+  # Specific settings for each optimizer. Unspecified settings will use defaults.
+  settings:
+    COBYLA:
+      maxiter: 2000 # Maximum number of iterations
+      tol: 0.000001 # Tolerance for termination
+      rhobeg: 0.1 # Initial step size
+    SLSQP:
+      maxiter: 1000
+      tol: 0.000001
+    SPSA:
+      maxiter: 500 # SPSA usually needs fewer iterations
+    L-BFGS-B:
+      maxiter: 1000
+      tol: 0.000001
+      eps: 0.00000001 # Step size for numerical gradient approximation
