@@ -106,7 +106,7 @@ def visualize_mo_3d(mol: gto.Mole, mo_coeff: np.ndarray, orb_index: int, config:
 
     print(f"Generating cube file for MO {orb_index + 1}: {cube_filename}")
     # cubegen.orbital expects the coefficients for *one* orbital, shape (n_basis,)
-    cubegen.orbital(mol, str(cube_filename), mo_coeff[:, orb_index])
+    cubegen.orbital(mol, str(cube_filename), mo_coeff[:, orb_index], nx=60, ny=60, nz=60)
     print("Cube file generated.")
 
     with open(cube_filename, 'r') as f:
