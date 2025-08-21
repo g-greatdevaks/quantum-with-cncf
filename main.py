@@ -8,7 +8,8 @@ L150: Local Quantum Simulation with VQE
 """
 import qiskit
 from qiskit_algorithms.minimum_eigensolvers import VQE
-from qiskit_algorithms.optimizers import COBYLA
+# Import additional optimizers
+from qiskit_algorithms.optimizers import COBYLA, SLSQP, SPSA, L_BFGS_B
 from qiskit_aer.primitives import Estimator as AerEstimator
 import qiskit_aer
 
@@ -16,7 +17,6 @@ import qiskit_aer
 import qiskit_nature
 from qiskit_nature.second_q.drivers import PySCFDriver
 from qiskit_nature.second_q.mappers import JordanWignerMapper
-# Import HartreeFock for the initial state
 from qiskit_nature.second_q.circuit.library import UCCSD, HartreeFock
 from qiskit_nature.second_q.problems import ElectronicStructureProblem
 from qiskit_nature.second_q.operators import FermionicOp
@@ -43,44 +43,33 @@ def print_versions():
     import qiskit_algorithms
     print(f"  Qiskit Algorithms: {qiskit_algorithms.__version__}")
     print(f"  Qiskit Nature: {qiskit_nature.__version__}")
-    # assert qiskit_nature.__version__ == "0.7.2"
     print(f"  PySCF: {pyscf.__version__}")
     print(f"  NumPy: {np.__version__}")
     print(f"  py3Dmol: {py3Dmol.__version__}")
     print("------------------------")
 
-def run_vqe_simulation(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mole, mf: pyscf.scf.hf.RHF):
+def run_vqe_simulation(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mole, mf: pyscf.scf.hf.RHF, optimizer_name: str = "COBYLA"):
     """
     L150: Runs VQE simulation for the molecule.
+    optimizer_name can be "COBYLA", "SLSQP", "SPSA", "L-BFGS-B"
     """
-    print("\n--- Starting L150: VQE Quantum Simulation ---")
+    print(f"\n--- Starting L150: VQE Quantum Simulation with {optimizer_name} ---")
     start_time = time.time()
 
     # 1. Get the ElectronicStructureProblem object from driver.run()
-    # This seems to be what works in your environment
-    print("  Running driver.run() to get ElectronicStructureProblem...")
     problem: ElectronicStructureProblem = driver.run()
-    if not isinstance(problem, ElectronicStructureProblem):
-         print(f"  Error: driver.run() did not return an ElectronicStructureProblem. Type: {type(problem)}")
-         return None
-    print("  ElectronicStructureProblem obtained.")
 
     # 2. Generate Second Quantized Operators
     try:
-        print("  Calling problem.second_q_ops()...")
         second_q_ops = problem.second_q_ops()
         electronic_hamiltonian = second_q_ops[0]
-        print("  Electronic Hamiltonian (FermionicOp) obtained.")
     except Exception as e:
         print(f"  Error calling second_q_ops(): {e}")
-        traceback.print_exc()
         return None
 
     # 3. Get Nuclear Repulsion Energy
     nuclear_repulsion_energy = problem.nuclear_repulsion_energy
-    if nuclear_repulsion_energy is None:
-        nuclear_repulsion_energy = mf.energy_nuc()
-    print(f"  Nuclear Repulsion Energy: {nuclear_repulsion_energy}")
+    if nuclear_repulsion_energy is None: nuclear_repulsion_energy = mf.energy_nuc()
     total_hamiltonian = electronic_hamiltonian + FermionicOp({"": nuclear_repulsion_energy})
 
     # 4. Define the Qubit Mapper
@@ -88,44 +77,35 @@ def run_vqe_simulation(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
 
     # 5. Map the Hamiltonian to qubits
     try:
-        print("  Mapping Hamiltonian to qubits...")
         qubit_op = mapper.map(total_hamiltonian)
-        print(f"  Qubit Hamiltonian created with {qubit_op.num_qubits} qubits.")
     except Exception as e:
         print(f"  Error during mapper.map(): {e}")
-        traceback.print_exc()
         return None
 
     # 6. Ansatz Setup
     num_spatial_orbitals = mf.mo_coeff.shape[1]
     num_particles = (mol.nelec[0], mol.nelec[1])
-
-    # --- CRITICAL CHANGE: Add HartreeFock initial state ---
-    hartree_fock_init_state = HartreeFock(
-        num_spatial_orbitals=num_spatial_orbitals,
-        num_particles=num_particles,
-        qubit_mapper=mapper
-    )
-
-    ansatz = UCCSD(
-        num_spatial_orbitals=num_spatial_orbitals,
-        num_particles=num_particles,
-        qubit_mapper=mapper,
-        initial_state=hartree_fock_init_state # Set the initial state
-    )
-    print(f"  UCCSD Ansatz created with {ansatz.num_parameters} parameters, using Hartree-Fock initial state.")
+    hartree_fock_init_state = HartreeFock(num_spatial_orbitals, num_particles, mapper)
+    ansatz = UCCSD(num_spatial_orbitals, num_particles, mapper, initial_state=hartree_fock_init_state)
 
     # 7. Estimator
     estimator = AerEstimator()
 
-    # 8. Optimizer
-    optimizer = COBYLA(maxiter=2000, tol=1e-6, rhobeg=0.1)
-    print(f"  Optimizer: COBYLA, maxiter=2000")
+    # 8. Optimizer Selection
+    if optimizer_name == "COBYLA":
+        optimizer = COBYLA(maxiter=2000, tol=1e-6, rhobeg=0.1)
+    elif optimizer_name == "SLSQP":
+        optimizer = SLSQP(maxiter=1000, tol=1e-6)
+    elif optimizer_name == "SPSA":
+        # SPSA is good with function evaluations, 2 per iteration.
+        optimizer = SPSA(maxiter=500)
+    elif optimizer_name == "L-BFGS-B":
+        optimizer = L_BFGS_B(maxiter=1000, tol=1e-6)
+    else:
+        raise ValueError(f"Unknown optimizer: {optimizer_name}")
+    print(f"  Optimizer: {optimizer_name}, Settings: {optimizer.settings}")
 
-    # 9. Initial Point for VQE - parameters for the *excitations*
     initial_point = np.zeros(ansatz.num_parameters)
-
-    # 10. VQE Solver
     vqe_solver = VQE(estimator, ansatz, optimizer, initial_point=initial_point)
 
     # 11. Run VQE
@@ -138,7 +118,7 @@ def run_vqe_simulation(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
 
     # 12. Display Results
     vqe_energy = vqe_result.optimal_value
-    print("\n--- VQE Results ---")
+    print(f"\n--- VQE Results ({optimizer_name}) ---")
     print(f"  VQE Ground State Energy: {vqe_energy:.6f} Hartree")
     print(f"  Hartree-Fock Energy (from PySCF): {mf.e_tot:.6f} Hartree")
     energy_diff = vqe_energy - mf.e_tot
@@ -149,22 +129,17 @@ def run_vqe_simulation(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
     elif abs(vqe_energy - mf.e_tot) < 1e-4:
          print("  VQE energy is very close to HF energy.")
     else:
-         print("  Warning: VQE energy is higher than HF. This should not happen with proper setup.")
+         print("  Warning: VQE energy is higher than HF. Optimization may not have converged well.")
     print("--- L150 Complete ---")
     return vqe_result
 
 def main():
-    # ... (rest of main function is unchanged)
     """
     Main pipeline for the demo.
     """
     print_versions()
     config: AppConfig = load_config()
-    print(f"Loaded Configuration: {config}")
-    output_dir = Path(config.visualization.output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # --- L100: Classical Calculations & Visualization ---
+    # ... (L100 setup)
     print("\n--- Starting L100: Classical Calculations & Visualization ---")
     driver = get_pyscf_driver(config.molecule)
     try:
@@ -172,24 +147,28 @@ def main():
     except RuntimeError as e:
         print(f"Error during PySCF calculation: {e}")
         return
-
+    # ... (L100 visualizations)
     mo_coeffs = mf.mo_coeff
-    if mo_coeffs is None:
-        print("Error: Could not retrieve mo_coeff from PySCF result (mf).")
-        return
-
     basis_labels = get_basis_labels(mol)
     plot_mo_coefficients(mo_coeffs, config.visualization, labels=basis_labels)
-
     num_orbitals = mo_coeffs.shape[1]
     num_orbitals_3d = min(2, num_orbitals)
     for i in range(num_orbitals_3d):
         visualize_mo_3d(mol, mo_coeffs, orb_index=i, config=config.visualization)
     print("--- L100 Complete ---")
-    print(f"  Classical outputs are saved in the '{config.visualization.output_dir}' directory.")
 
     # --- L150: VQE Quantum Simulation ---
-    run_vqe_simulation(driver, config, mol, mf)
+    print("\n\n=== Running COBYLA ===")
+    run_vqe_simulation(driver, config, mol, mf, optimizer_name="COBYLA")
+
+    print("\n\n=== Running SLSQP ===")
+    run_vqe_simulation(driver, config, mol, mf, optimizer_name="SLSQP")
+
+    print("\n\n=== Running SPSA ===")
+    run_vqe_simulation(driver, config, mol, mf, optimizer_name="SPSA")
+
+    print("\n\n=== Running L-BFGS-B ===")
+    run_vqe_simulation(driver, config, mol, mf, optimizer_name="L-BFGS-B")
 
 if __name__ == "__main__":
     main()
