@@ -19,6 +19,19 @@ L150: Local Quantum Simulation with VQE
       - Runs on a local classical simulator (Qiskit Aer).
       This stage introduces quantum computation concepts.
 """
+import warnings
+import sys
+import time
+import traceback
+import os
+from pathlib import Path
+import argparse
+
+# --- Suppress specific DeprecationWarnings from qiskit-aer ---
+warnings.filterwarnings("ignore", category=DeprecationWarning, message=".*Estimator has been deprecated as of Aer 0.15.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning, message=".*Option approximation=False is deprecated as of qiskit-aer 0.13.*")
+# ---
+
 import qiskit
 from qiskit_algorithms.minimum_eigensolvers import VQE
 from qiskit_algorithms.optimizers import COBYLA, SLSQP, SPSA, L_BFGS_B
@@ -37,14 +50,8 @@ import pyscf
 import numpy as np
 import matplotlib.pyplot as plt
 import py3Dmol
-import os
-from pathlib import Path
-import sys
-import time
-import traceback
 from tabulate import tabulate
 import pandas as pd
-import argparse
 
 # Local imports
 from config import AppConfig, OptimizerSettings
@@ -103,7 +110,8 @@ def run_vqe_simulation(qubit_op, ansatz, optimizer, initial_point):
     print(f"  VQE finished in {runtime:.2f} seconds.")
 
     # Number of times the VQE energy was evaluated by the optimizer.
-    evaluations = vqe_result.cost_function_evals if hasattr(vqe_result, 'cost_function_evals') else -1
+    # evaluations = vqe_result.cost_function_evals if hasattr(vqe_result, 'cost_function_evals') else -1
+    evaluations = getattr(vqe_result, 'cost_function_evals', -1)
     return vqe_result.optimal_value, evaluations, runtime, vqe_result
 
 def get_optimizer_instance(name: str, settings: OptimizerSettings):
@@ -175,13 +183,13 @@ def compare_optimizers(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
 
     # 3. Run VQE for each optimizer
     raw_results = []
-    hf_energy = mf.e_tot
+    hf_energy = mf.e_tot # Classical Hartree-Fock energy for reference.
 
     for opt_name in optimizers_to_run:
-        if opt_name not in config.optimizers.settings:
+        opt_settings = config.optimizers.settings.get(opt_name)
+        if not opt_settings:
             print(f"Warning: Settings for Optimizer '{opt_name}' not found in config. Skipping.")
             continue
-        opt_settings = config.optimizers.settings[opt_name]
         print(f"\n--- Testing Optimizer: {opt_name} ---")
         print(f"  Settings: {opt_settings.model_dump(exclude_unset=True)}")
 
@@ -202,8 +210,8 @@ def compare_optimizers(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
                 "Evals": evaluations,
                 "Time": runtime,
                 "Converged": converged,
-                "NFEV": getattr(opt_result, 'nfev', -1),
-                "NIT": getattr(opt_result, 'nit', -1),
+                "NFEV": getattr(opt_result, 'nfev', -1), # Number of Function Evaluations by optimizer
+                "NIT": getattr(opt_result, 'nit', -1),  # Number of Optimizer Iterations
                 "Status": status,
                 "Message": getattr(opt_result, 'message', 'N/A')
             })
