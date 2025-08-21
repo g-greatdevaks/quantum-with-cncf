@@ -8,7 +8,6 @@ L150: Local Quantum Simulation with VQE
 """
 import qiskit
 from qiskit_algorithms.minimum_eigensolvers import VQE
-# Changed from SLSQP to COBYLA
 from qiskit_algorithms.optimizers import COBYLA
 from qiskit_aer.primitives import Estimator as AerEstimator
 import qiskit_aer
@@ -17,8 +16,10 @@ import qiskit_aer
 import qiskit_nature
 from qiskit_nature.second_q.drivers import PySCFDriver
 from qiskit_nature.second_q.mappers import JordanWignerMapper
-from qiskit_nature.second_q.circuit.library import UCCSD
-from qiskit_nature.second_q.hamiltonians import ElectronicEnergy
+# Import HartreeFock for the initial state
+from qiskit_nature.second_q.circuit.library import UCCSD, HartreeFock
+from qiskit_nature.second_q.problems import ElectronicStructureProblem
+from qiskit_nature.second_q.operators import FermionicOp
 
 import pyscf
 import numpy as np
@@ -55,72 +56,87 @@ def run_vqe_simulation(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
     print("\n--- Starting L150: VQE Quantum Simulation ---")
     start_time = time.time()
 
-    # 1. Create ElectronicStructureProblem
-    print("  Creating ElectronicStructureProblem...")
-    problem = driver.run()
-    print("  ElectronicStructureProblem instance created.")
+    # 1. Get the ElectronicStructureProblem object from driver.run()
+    # This seems to be what works in your environment
+    print("  Running driver.run() to get ElectronicStructureProblem...")
+    problem: ElectronicStructureProblem = driver.run()
+    if not isinstance(problem, ElectronicStructureProblem):
+         print(f"  Error: driver.run() did not return an ElectronicStructureProblem. Type: {type(problem)}")
+         return None
+    print("  ElectronicStructureProblem obtained.")
 
     # 2. Generate Second Quantized Operators
     try:
         print("  Calling problem.second_q_ops()...")
         second_q_ops = problem.second_q_ops()
-        if not second_q_ops:
-            print("  Error: second_q_ops() returned empty list or None.")
-            return None
-        hamiltonian = second_q_ops[0]
-        print("  Second quantized operators obtained.")
+        electronic_hamiltonian = second_q_ops[0]
+        print("  Electronic Hamiltonian (FermionicOp) obtained.")
     except Exception as e:
         print(f"  Error calling second_q_ops(): {e}")
         traceback.print_exc()
         return None
 
-    # 3. Define the Qubit Mapper and map the Hamiltonian
+    # 3. Get Nuclear Repulsion Energy
+    nuclear_repulsion_energy = problem.nuclear_repulsion_energy
+    if nuclear_repulsion_energy is None:
+        nuclear_repulsion_energy = mf.energy_nuc()
+    print(f"  Nuclear Repulsion Energy: {nuclear_repulsion_energy}")
+    total_hamiltonian = electronic_hamiltonian + FermionicOp({"": nuclear_repulsion_energy})
+
+    # 4. Define the Qubit Mapper
     mapper = JordanWignerMapper()
+
+    # 5. Map the Hamiltonian to qubits
     try:
         print("  Mapping Hamiltonian to qubits...")
-        qubit_op = mapper.map(hamiltonian)
-        if qubit_op is None:
-             print("  Error: mapper.map() returned None")
-             return None
+        qubit_op = mapper.map(total_hamiltonian)
         print(f"  Qubit Hamiltonian created with {qubit_op.num_qubits} qubits.")
     except Exception as e:
         print(f"  Error during mapper.map(): {e}")
         traceback.print_exc()
         return None
 
-    # 4. Ansatz Setup
+    # 6. Ansatz Setup
     num_spatial_orbitals = mf.mo_coeff.shape[1]
     num_particles = (mol.nelec[0], mol.nelec[1])
-    ansatz = UCCSD(num_spatial_orbitals, num_particles, mapper)
-    print(f"  UCCSD Ansatz created with {ansatz.num_parameters} parameters.")
 
-    # 5. Estimator
-    estimator = AerEstimator()
-
-    # 6. Optimizer
-    # Switched to COBYLA and increased maxiter
-    optimizer = COBYLA(maxiter=1000, tol=1e-4)
-    print(f"  Optimizer: COBYLA, maxiter=1000")
-
-    # 7. Initial Point for VQE
-    initial_point = np.zeros(ansatz.num_parameters)
-
-    # 8. VQE Solver
-    vqe_solver = VQE(
-        estimator=estimator,
-        ansatz=ansatz,
-        optimizer=optimizer,
-        initial_point=initial_point  # Set the initial point
+    # --- CRITICAL CHANGE: Add HartreeFock initial state ---
+    hartree_fock_init_state = HartreeFock(
+        num_spatial_orbitals=num_spatial_orbitals,
+        num_particles=num_particles,
+        qubit_mapper=mapper
     )
 
-    # 9. Run VQE
+    ansatz = UCCSD(
+        num_spatial_orbitals=num_spatial_orbitals,
+        num_particles=num_particles,
+        qubit_mapper=mapper,
+        initial_state=hartree_fock_init_state # Set the initial state
+    )
+    print(f"  UCCSD Ansatz created with {ansatz.num_parameters} parameters, using Hartree-Fock initial state.")
+
+    # 7. Estimator
+    estimator = AerEstimator()
+
+    # 8. Optimizer
+    optimizer = COBYLA(maxiter=2000, tol=1e-6, rhobeg=0.1)
+    print(f"  Optimizer: COBYLA, maxiter=2000")
+
+    # 9. Initial Point for VQE - parameters for the *excitations*
+    initial_point = np.zeros(ansatz.num_parameters)
+
+    # 10. VQE Solver
+    vqe_solver = VQE(estimator, ansatz, optimizer, initial_point=initial_point)
+
+    # 11. Run VQE
     print("  Running VQE.compute_minimum_eigenvalue...")
     vqe_result = vqe_solver.compute_minimum_eigenvalue(qubit_op)
     end_time = time.time()
     print(f"  VQE calculation finished in {end_time - start_time:.2f} seconds.")
-    print(f"  Optimizer evaluations: {vqe_result.cost_function_evals}")
+    if hasattr(vqe_result, 'cost_function_evals'):
+        print(f"  Optimizer evaluations: {vqe_result.cost_function_evals}")
 
-    # 10. Display Results
+    # 12. Display Results
     vqe_energy = vqe_result.optimal_value
     print("\n--- VQE Results ---")
     print(f"  VQE Ground State Energy: {vqe_energy:.6f} Hartree")
@@ -128,17 +144,17 @@ def run_vqe_simulation(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
     energy_diff = vqe_energy - mf.e_tot
     print(f"  VQE Energy - HF Energy: {energy_diff:.6f} Hartree")
 
-    if vqe_energy > mf.e_tot + 1e-4:
-         print("  Warning: VQE energy is still higher than HF. Optimization may not have converged well.")
-    elif vqe_energy < mf.e_tot - 1e-9:
+    if vqe_energy < mf.e_tot - 1e-4:
          print(f"  VQE found a lower energy: {vqe_energy:.6f} (Correlation energy: {energy_diff:.6f})")
-    else:
+    elif abs(vqe_energy - mf.e_tot) < 1e-4:
          print("  VQE energy is very close to HF energy.")
-
+    else:
+         print("  Warning: VQE energy is higher than HF. This should not happen with proper setup.")
     print("--- L150 Complete ---")
     return vqe_result
 
 def main():
+    # ... (rest of main function is unchanged)
     """
     Main pipeline for the demo.
     """
