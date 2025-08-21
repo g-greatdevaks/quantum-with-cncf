@@ -18,3 +18,7 @@ numpy
 pydantic
 pyyaml
 ipython # For notebook-like execution if needed
+
+# Table
+tabulate
+pandas

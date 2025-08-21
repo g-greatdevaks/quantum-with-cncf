@@ -28,8 +28,10 @@ from pathlib import Path
 import sys
 import time
 import traceback
-from tabulate import tabulate # For pretty table printing
+from tabulate import tabulate
+import pandas as pd
 
+# Local imports
 from config import load_config, AppConfig
 from chemistry import get_pyscf_driver, run_pyscf_calculation
 from visualization import plot_mo_coefficients, visualize_mo_3d, get_basis_labels
@@ -51,6 +53,11 @@ def print_versions():
         print(f"  Tabulate: {tabulate.__version__}")
     except ImportError:
         print("  Tabulate: Not installed")
+    try:
+        import pandas
+        print(f"  Pandas: {pandas.__version__}")
+    except ImportError:
+        print("  Pandas: Not installed")
     print("------------------------")
 
 def run_vqe_simulation(qubit_op, ansatz, optimizer, initial_point):
@@ -67,16 +74,16 @@ def run_vqe_simulation(qubit_op, ansatz, optimizer, initial_point):
     runtime = end_time - start_time
     print(f"  VQE finished in {runtime:.2f} seconds.")
 
-    evaluations = vqe_result.cost_function_evals if hasattr(vqe_result, 'cost_function_evals') else 'N/A'
+    evaluations = vqe_result.cost_function_evals if hasattr(vqe_result, 'cost_function_evals') else -1
     return vqe_result.optimal_value, evaluations, runtime
 
 def compare_optimizers(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mole, mf: pyscf.scf.hf.RHF):
     """
-    L150: Runs VQE with different optimizers and compares results.
+    L150: Runs VQE with different optimizers and compares results with rankings.
     """
     print("\n--- Starting L150: VQE Optimizer Comparison ---")
 
-    # 1. Setup the problem and map to qubits (common for all optimizers)
+    # 1. Setup the problem and map to qubits
     problem: ElectronicStructureProblem = driver.run()
     try:
         second_q_ops = problem.second_q_ops()
@@ -110,13 +117,12 @@ def compare_optimizers(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
         {"name": "COBYLA", "instance": COBYLA(maxiter=2000, tol=1e-6, rhobeg=0.1)},
         {"name": "SLSQP", "instance": SLSQP(maxiter=1000, tol=1e-6)},
         {"name": "SPSA", "instance": SPSA(maxiter=500)},
-         {"name": "L-BFGS-B", "instance": L_BFGS_B(maxiter=1000, tol=1e-6)},
+        {"name": "L-BFGS-B", "instance": L_BFGS_B(maxiter=1000, tol=1e-6)},
     ]
 
     # 3. Run VQE for each optimizer
-    results = []
+    raw_results = []
     hf_energy = mf.e_tot
-    print(f"\n  Hartree-Fock Energy (from PySCF): {hf_energy:.6f} Hartree")
 
     for opt_config in optimizer_configs:
         opt_name = opt_config["name"]
@@ -126,31 +132,48 @@ def compare_optimizers(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
 
         try:
             vqe_energy, evaluations, runtime = run_vqe_simulation(qubit_op, ansatz, optimizer, initial_point)
-            correlation_energy = vqe_energy - hf_energy
-            results.append({
+            raw_results.append({
                 "Optimizer": opt_name,
-                "VQE Energy (H)": f"{vqe_energy:.6f}",
+                "VQE Energy": vqe_energy,
                 "Evals": evaluations,
-                "Time (s)": f"{runtime:.2f}",
-                "Corr. Energy (H)": f"{correlation_energy:.6f}"
+                "Time": runtime
             })
         except Exception as e:
             print(f"  Error running VQE with {opt_name}: {e}")
             traceback.print_exc()
-            results.append({
+            raw_results.append({
                 "Optimizer": opt_name,
-                "VQE Energy (H)": "Error",
-                "Evals": "Error",
-                "Time (s)": "Error",
-                "Corr. Energy (H)": "Error"
+                "VQE Energy": float('inf'), # Error case
+                "Evals": -1,
+                "Time": float('inf')
             })
 
-    # 4. Display Comparison Table
-    print("\n\n--- VQE Optimizer Comparison Results ---")
-    if results:
-        headers = results[0].keys()
-        rows = [list(r.values()) for r in results]
-        print(tabulate(rows, headers=headers, tablefmt="grid"))
+    # 4. Create DataFrame and Add Rankings
+    df = pd.DataFrame(raw_results)
+
+    if not df.empty:
+        df["Energy Rank"] = df["VQE Energy"].rank(method='min')
+        df["Evals Rank"] = df["Evals"].rank(method='min', na_option='bottom')
+        df["Time Rank"] = df["Time"].rank(method='min')
+
+        df["Overall Score"] = df["Energy Rank"] + df["Evals Rank"] + df["Time Rank"]
+        df["Overall Rank"] = df["Overall Score"].rank(method='min')
+
+        display_df = df.copy()
+        display_df["VQE Energy (H)"] = display_df["VQE Energy"].apply(lambda x: f"{x:.6f}" if x != float('inf') else "Error")
+        display_df["Time (s)"] = display_df["Time"].apply(lambda x: f"{x:.2f}" if x != float('inf') else "Error")
+        display_df["Corr. Energy (H)"] = display_df["VQE Energy"].apply(lambda x: f"{x - hf_energy:.6f}" if x != float('inf') else "Error")
+
+        display_df = display_df[["Optimizer", "VQE Energy (H)", "Evals", "Time (s)", "Corr. Energy (H)", "Energy Rank", "Evals Rank", "Time Rank", "Overall Rank"]]
+
+        # --- Added HF Energy Print ---
+        print(f"\n\nReference Hartree-Fock Energy: {hf_energy:.6f} Hartree")
+        print("\n--- VQE Optimizer Comparison Results ---")
+        try:
+            print(tabulate(display_df, headers="keys", tablefmt="grid", showindex=False))
+        except ImportError:
+            print("  'tabulate' library not found. Please install it for a formatted table.")
+            print(df)
     else:
         print("  No results to display.")
 
