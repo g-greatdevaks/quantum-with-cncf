@@ -8,17 +8,17 @@ L150: Local Quantum Simulation with VQE
 """
 import qiskit
 from qiskit_algorithms.minimum_eigensolvers import VQE
-from qiskit_algorithms.optimizers import SLSQP
+# Changed from SLSQP to COBYLA
+from qiskit_algorithms.optimizers import COBYLA
 from qiskit_aer.primitives import Estimator as AerEstimator
 import qiskit_aer
 
 # Qiskit Nature imports
 import qiskit_nature
 from qiskit_nature.second_q.drivers import PySCFDriver
-# DistanceUnit is in chemistry.py, not needed here
-from qiskit_nature.second_q.problems import ElectronicStructureProblem
 from qiskit_nature.second_q.mappers import JordanWignerMapper
 from qiskit_nature.second_q.circuit.library import UCCSD
+from qiskit_nature.second_q.hamiltonians import ElectronicEnergy
 
 import pyscf
 import numpy as np
@@ -67,7 +67,6 @@ def run_vqe_simulation(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
         if not second_q_ops:
             print("  Error: second_q_ops() returned empty list or None.")
             return None
-        # The first operator in the list is the main electronic Hamiltonian.
         hamiltonian = second_q_ops[0]
         print("  Second quantized operators obtained.")
     except Exception as e:
@@ -93,23 +92,35 @@ def run_vqe_simulation(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
     num_spatial_orbitals = mf.mo_coeff.shape[1]
     num_particles = (mol.nelec[0], mol.nelec[1])
     ansatz = UCCSD(num_spatial_orbitals, num_particles, mapper)
+    print(f"  UCCSD Ansatz created with {ansatz.num_parameters} parameters.")
 
     # 5. Estimator
     estimator = AerEstimator()
 
     # 6. Optimizer
-    optimizer = SLSQP(maxiter=200)
+    # Switched to COBYLA and increased maxiter
+    optimizer = COBYLA(maxiter=1000, tol=1e-4)
+    print(f"  Optimizer: COBYLA, maxiter=1000")
 
-    # 7. VQE Solver
-    vqe_solver = VQE(estimator=estimator, ansatz=ansatz, optimizer=optimizer)
+    # 7. Initial Point for VQE
+    initial_point = np.zeros(ansatz.num_parameters)
 
-    # 8. Run VQE
+    # 8. VQE Solver
+    vqe_solver = VQE(
+        estimator=estimator,
+        ansatz=ansatz,
+        optimizer=optimizer,
+        initial_point=initial_point  # Set the initial point
+    )
+
+    # 9. Run VQE
     print("  Running VQE.compute_minimum_eigenvalue...")
     vqe_result = vqe_solver.compute_minimum_eigenvalue(qubit_op)
     end_time = time.time()
     print(f"  VQE calculation finished in {end_time - start_time:.2f} seconds.")
+    print(f"  Optimizer evaluations: {vqe_result.cost_function_evals}")
 
-    # 9. Display Results
+    # 10. Display Results
     vqe_energy = vqe_result.optimal_value
     print("\n--- VQE Results ---")
     print(f"  VQE Ground State Energy: {vqe_energy:.6f} Hartree")
@@ -118,9 +129,9 @@ def run_vqe_simulation(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
     print(f"  VQE Energy - HF Energy: {energy_diff:.6f} Hartree")
 
     if vqe_energy > mf.e_tot + 1e-4:
-         print("  Note: VQE energy is slightly higher than HF. Optimization might need more iterations or a different starting point.")
+         print("  Warning: VQE energy is still higher than HF. Optimization may not have converged well.")
     elif vqe_energy < mf.e_tot - 1e-9:
-         print(f"  VQE found a lower energy, indicating electron correlation effects are captured.")
+         print(f"  VQE found a lower energy: {vqe_energy:.6f} (Correlation energy: {energy_diff:.6f})")
     else:
          print("  VQE energy is very close to HF energy.")
 
