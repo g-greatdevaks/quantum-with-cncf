@@ -1,0 +1,11 @@
+molecule:
+  atom_labels: ["H", "H"]
+  atom_distance: 0.735
+  basis: "sto3g"
+  charge: 0
+  spin: 0
+
+visualization:
+  max_orbitals_plot: 4
+  isoval: 0.02
+  output_dir: "outputs"

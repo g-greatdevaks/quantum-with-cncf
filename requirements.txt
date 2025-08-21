@@ -1,0 +1,20 @@
+# Core Qiskit
+qiskit>=1.0.0,<2.0.0
+qiskit-aer
+
+# Qiskit Application Modules
+qiskit-algorithms
+qiskit-nature
+
+# Chemistry Backend
+pyscf>=2.5.0
+
+# Visualization
+matplotlib
+py3Dmol>=2.0.0
+
+# Utilities
+numpy
+pydantic
+pyyaml
+ipython # For notebook-like execution if needed
