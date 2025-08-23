@@ -1,0 +1,43 @@
+# Git
+.git
+.gitignore
+
+# Docker
+.dockerignore
+Dockerfile
+
+# Python virtual environments
+.venv
+venv
+env
+
+# Python cache
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Build artifacts
+build
+dist
+*.egg-info
+
+# IDE/Editor directories
+.idea
+.vscode
+
+# OS-specific
+.DS_Store
+
+# Helm chart directory - not needed in the app image
+helm
+
+# Local outputs - not needed in the image
+outputs
+kubecon_outputs
+
+# Documentation
+# *.md
+
+# Helm ignore file
+.helmignore

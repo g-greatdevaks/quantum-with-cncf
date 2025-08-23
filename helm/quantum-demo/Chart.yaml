@@ -1,0 +1,6 @@
+apiVersion: v2
+name: quantum-demo
+description: A Helm chart for the KubeCon Quantum Simulation Demo
+type: application
+version: 0.2.0 # Incremented version
+appVersion: "l200" # Updated to match the image tag

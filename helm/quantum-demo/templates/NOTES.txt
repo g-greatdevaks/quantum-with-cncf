@@ -1,0 +1,55 @@
+The Quantum Demo Job '{{ include "quantum-demo.fullname" . }}' in namespace '{{ .Release.Namespace }}'.
+
+**VERY IMPORTANT:** To run or re-run this Job, you **MUST** first ensure any existing instance is deleted, as Job specifications cannot be updated in-place:
+
+  kubectl --namespace {{ .Release.Namespace }} delete job {{ include "quantum-demo.fullname" . }} --ignore-not-found=true
+
+**Then, to deploy and run the Job:**
+
+  helm upgrade --install quantum-demo ./helm/quantum-demo \
+    --namespace {{ .Release.Namespace }} \
+    --create-namespace \
+    --wait \
+    --atomic \
+    --timeout {{ .Values.job.timeout }}
+
+{{- if .Values.waitForCompletion }}
+HELM IS WAITING for the Job to complete due to the --wait flag.
+Timeout set to: {{ .Values.job.timeout }}
+{{- end }}
+
+**Monitoring Commands:**
+
+1.  **Job Status:**
+    kubectl --namespace {{ .Release.Namespace }} describe job {{ include "quantum-demo.fullname" . }}
+
+2.  **Pods:**
+    kubectl --namespace {{ .Release.Namespace }} get pods -l job-name={{ include "quantum-demo.fullname" . }} -w
+
+3.  **Logs:**
+    export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} -l "job-name={{ include "quantum-demo.fullname" . }}" -o jsonpath="{.items[0].metadata.name}")
+    if [ -n "$POD_NAME" ]; then
+      echo "Tailing logs for pod: $POD_NAME"
+      kubectl --namespace {{ .Release.Namespace }} logs -f $POD_NAME
+    else
+      echo "No pods found yet for the job."
+    fi
+
+**After Helm Command Completion:**
+
+*   **Copy Outputs (on Success):**
+    export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} -l "job-name={{ include "quantum-demo.fullname" . }}" -o jsonpath="{.items[0].metadata.name}")
+    if [ -z "$POD_NAME" ]; then
+      echo "Pod not found."
+    else
+      POD_STATUS=$(kubectl get pod $POD_NAME -n {{ .Release.Namespace }} -o jsonpath='{.status.phase}')
+      if [ "$POD_STATUS" == "Succeeded" ]; then
+        mkdir -p ./kubecon_outputs
+        kubectl --namespace {{ .Release.Namespace }} cp ${POD_NAME}:/app/outputs ./kubecon_outputs/
+        echo "Output files copied to ./kubecon_outputs/outputs"
+      else
+        echo "Pod $POD_NAME did not Succeed. Status: $POD_STATUS"
+      fi
+    fi
+
+*   **Cleanup:** Job auto-deletes after {{ .Values.job.ttlSecondsAfterFinished }} seconds.

@@ -1,6 +1,7 @@
-# molecule_config.yaml
-# This file defines the default parameters for the simulation.
+# This file defines the default parameters for the simulation for LOCAL runs.
 # These settings can be overridden by environment variables.
+# When running on Kubernetes, this configuration is supplied via ConfigMap
+# defined in helm/quantum-demo/values.yaml
 
 molecule:
   atom_labels: ["H", "H"] # The atoms in the molecule

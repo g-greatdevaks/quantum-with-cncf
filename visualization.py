@@ -1,4 +1,3 @@
-# visualization.py
 """
 This module contains functions for generating visualizations
 related to the quantum chemistry calculations, including:
@@ -72,7 +71,7 @@ def get_basis_labels(mol: gto.Mole) -> list[str]:
         l = mol.bas_angular(i)
         l_map = {0: 's', 1: 'p', 2: 'd', 3: 'f'}
         ang = l_map.get(l, str(l))
-        
+
         # For higher angular momentum, PySCF has multiple functions per basis shell
         n_functions = mol.bas_len_cart(i) # Number of cartesian functions
         if n_functions == 1:
@@ -113,8 +112,13 @@ def visualize_mo_3d(mol: gto.Mole, mo_coeff: np.ndarray, orb_index: int, config:
     print(f"Generating cube file for MO {orb_index + 1}: {cube_filename}")
     # Generate the cube file for the selected MO.
     # cubegen.orbital expects the coefficients for *one* orbital, shape (n_basis,).
-    cubegen.orbital(mol, str(cube_filename), mo_coeff[:, orb_index], nx=60, ny=60, nz=60)
-    print("Cube file generated.")
+    try:
+        cubegen.orbital(mol, str(cube_filename), mo_coeff[:, orb_index], nx=60, ny=60, nz=60)
+        print("Cube file generated.")
+    except Exception as e:
+        print(f"Error generating cube file for MO {orb_index + 1}: {e}")
+        traceback.print_exc()
+        return
 
     # Read the cube data.
     with open(cube_filename, 'r') as f:
@@ -151,7 +155,6 @@ def draw_circuit(circuit, filename, output_dir):
         output_path = Path(output_dir) / filename
         # Using 'mpl' output for a matplotlib-generated image.
         # 'fold=-1' prevents line wrapping for wider circuits.
-        # Custom styling for UCCSD and HartreeFock gates for clarity.
         style = {'displaycolor': {'UCCSD': ('#c2e0c6', '#000000'), 'HartreeFock': ('#a6cbe3', '#000000')}}
         circuit.draw(output='mpl', style=style, fold=-1).savefig(output_path, bbox_inches='tight')
         print(f"  Circuit diagram saved to {output_path}")

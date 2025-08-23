@@ -1,0 +1,64 @@
+image:
+  repository: us-central1-docker.pkg.dev/aks-signifyd-service-00-f29d/kubecon-quantum-repo/quantum-demo # Replace
+  pullPolicy: Always
+  tag: "l200"
+
+# This value is used to ensure resources are targeted to the correct namespace,
+# which is created by the --namespace and --create-namespace flags in the helm command.
+namespace:
+  name: quantum-demo
+
+job:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 1
+  timeout: "10m" # Default timeout for NOTES
+
+waitForCompletion: true # Controls parts of NOTES.txt
+
+resources:
+  limits:
+    nvidia.com/gpu: 1
+  requests:
+    nvidia.com/gpu: 1
+    cpu: "1"
+    memory: "2Gi"
+
+env:
+  APP_SIMULATOR_DEVICE: "GPU"
+
+nodeSelector:
+  cloud.google.com/gke-nodepool: gpu-pool
+tolerations:
+  - key: "quantum-workload"
+    operator: "Equal"
+    value: "true"
+    effect: "NoSchedule"
+
+moleculeConfigYml: |
+  molecule:
+    atom_labels: ["H", "H"]
+    atom_distance: 0.735
+    basis: "sto3g"
+    charge: 0
+    spin: 0
+  visualization:
+    max_orbitals_plot: 4
+    isoval: 0.02
+    output_dir: "outputs"
+    draw_circuits: True
+  optimizers:
+    run: ["COBYLA", "SLSQP", "SPSA", "L-BFGS-B"]
+    settings:
+      COBYLA:
+        maxiter: 2000
+        tol: 0.000001
+        rhobeg: 0.1
+      SLSQP:
+        maxiter: 1000
+        tol: 0.000001
+      SPSA:
+        maxiter: 500
+      L-BFGS-B:
+        maxiter: 1000
+        tol: 0.000001
+        eps: 0.00000001

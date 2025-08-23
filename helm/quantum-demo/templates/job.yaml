@@ -1,0 +1,57 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "quantum-demo.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+  {{- include "quantum-demo.labels" . | nindent 4 }}
+spec:
+  ttlSecondsAfterFinished: {{ .Values.job.ttlSecondsAfterFinished }}
+  backoffLimit: {{ .Values.job.backoffLimit }}
+  template:
+    metadata:
+      # Keep Pod template labels minimal. The Job controller will add its own.
+      labels:
+        app.kubernetes.io/name: {{ include "quantum-demo.name" . }}
+        # Do NOT include app.kubernetes.io/instance here, as this can cause issues with Job updates/recreations.
+        # Do NOT include job-name here; the controller adds this to the Pods.
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["python", "main.py", "--config", "/config/molecule_config.yaml"]
+          env:
+            {{- range $key, $value := .Values.env }}
+            - name: {{ $key }}
+              value: {{ $value | quote }}
+            {{- end }}
+          resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config-volume
+              mountPath: /config
+              readOnly: true
+            - name: outputs-volume
+              mountPath: /app/outputs
+      volumes:
+        - name: config-volume
+          configMap:
+            name: {{ include "quantum-demo.fullname" . }}-config
+        - name: outputs-volume
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+      {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+      {{- toYaml . | nindent 8 }}
+      {{- end }}

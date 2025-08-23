@@ -1,4 +1,3 @@
-# config.py
 """
 Configuration models for the quantum chemistry simulation.
 
@@ -102,4 +101,3 @@ class AppConfig(BaseSettings):
 
         # cls.model_validate will parse the dict and also check environment variables
         return cls.model_validate(config_data)
-

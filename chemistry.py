@@ -1,4 +1,3 @@
-# chemistry.py
 """
 This module handles the classical quantum chemistry calculations
 interfacing with PySCF through Qiskit Nature's drivers.

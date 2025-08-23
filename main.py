@@ -1,4 +1,3 @@
-# main.py
 """
 Main script for the Molecular Orbital Visualization and Quantum Simulation Demo.
 KubeCon EU 2025 - Quantum Curious: Your Cloud-Native Launchpad
@@ -18,6 +17,11 @@ L150: Local Quantum Simulation with VQE
       - Compares different classical optimizers for the VQE loop.
       - Runs on a local classical simulator (Qiskit Aer).
       This stage introduces quantum computation concepts.
+
+L200: Containerized Quantum Simulation on Kubernetes
+      - This script can be run inside a Docker container.
+      - Qiskit Aer simulator can be configured to use GPU if available on the node
+        by setting the environment variable APP_SIMULATOR_DEVICE="GPU".
 """
 import warnings
 import sys
@@ -36,6 +40,7 @@ import qiskit
 from qiskit_algorithms.minimum_eigensolvers import VQE
 from qiskit_algorithms.optimizers import COBYLA, SLSQP, SPSA, L_BFGS_B
 from qiskit_aer.primitives import Estimator as AerEstimator
+from qiskit_aer import AerSimulator
 import qiskit_aer
 
 # Qiskit Nature imports
@@ -80,6 +85,16 @@ def print_versions():
         print(f"  Pandas: {pandas.__version__}")
     except ImportError:
         print("  Pandas: Not installed")
+    try:
+        import torch
+        print(f"  Torch: {torch.__version__}")
+        print(f"    CUDA Available: {torch.cuda.is_available()}")
+        if torch.cuda.is_available():
+            print(f"    CUDA Devices: {torch.cuda.device_count()}")
+            for i in range(torch.cuda.device_count()):
+                 print(f"    CUDA Device {i}: {torch.cuda.get_device_name(i)}")
+    except ImportError:
+        print("  Torch: Not installed")
     print("------------------------")
 
 def run_vqe_simulation(qubit_op, ansatz, optimizer, initial_point):
@@ -95,8 +110,45 @@ def run_vqe_simulation(qubit_op, ansatz, optimizer, initial_point):
     Returns:
         tuple: (vqe_energy, evaluations, runtime, vqe_result)
     """
-    # AerEstimator is used to calculate expectation values on the Aer simulator.
-    estimator = AerEstimator()
+    simulator_device = os.getenv("APP_SIMULATOR_DEVICE", "CPU").upper()
+    print(f"  Configuring AerSimulator for device: {simulator_device}")
+
+    estimator = None
+    # backend_options for AerEstimator
+    backend_options = {}
+
+    if simulator_device == "GPU":
+        print("  Attempting to use GPU for AerSimulator.")
+        try:
+            import torch
+            if not torch.cuda.is_available():
+                print("  Warning: GPU mode selected, but torch.cuda.is_available() is False.")
+                print("  Falling back to CPU.")
+                simulator_device = "CPU"
+            else:
+                print(f"  CUDA devices found: {torch.cuda.device_count()}, using device 0")
+                backend_options["device"] = "GPU"
+        except ImportError:
+             print("  Warning: torch not found, cannot reliably check for CUDA availability. Assuming GPU is available if APP_SIMULATOR_DEVICE is GPU.")
+             backend_options["device"] = "GPU"
+        except Exception as e:
+             print(f"  Error checking CUDA: {e}. Falling back to CPU")
+             simulator_device = "CPU"
+    else:
+        backend_options["device"] = "CPU"
+
+    try:
+        estimator = AerEstimator(
+            backend_options=backend_options,
+            run_options={"shots": None}, # Statevector simulation
+            transpile_options={"optimization_level": 0} # Minimal transpile for simulators
+        )
+        print(f"  AerEstimator configured to use device: {simulator_device}.")
+    except Exception as e:
+        print(f"  Warning: Could not configure simulator with backend_options {backend_options}: {e}")
+        traceback.print_exc()
+        print("  Falling back to default AerEstimator settings (likely CPU).")
+        estimator = AerEstimator()
 
     # VQE algorithm setup.
     vqe_solver = VQE(estimator, ansatz, optimizer, initial_point=initial_point)
@@ -109,8 +161,6 @@ def run_vqe_simulation(qubit_op, ansatz, optimizer, initial_point):
     runtime = end_time - start_time
     print(f"  VQE finished in {runtime:.2f} seconds.")
 
-    # Number of times the VQE energy was evaluated by the optimizer.
-    # evaluations = vqe_result.cost_function_evals if hasattr(vqe_result, 'cost_function_evals') else -1
     evaluations = getattr(vqe_result, 'cost_function_evals', -1)
     return vqe_result.optimal_value, evaluations, runtime, vqe_result
 
@@ -161,17 +211,19 @@ def compare_optimizers(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
 
     # 1. Setup the quantum problem
     problem: ElectronicStructureProblem = driver.run()
-    nuclear_repulsion_energy = problem.nuclear_repulsion_energy or mf.energy_nuc()
-    electronic_hamiltonian = problem.second_q_ops()[0]
-    total_hamiltonian = electronic_hamiltonian + FermionicOp({"": nuclear_repulsion_energy})
+    num_spatial_orbitals = problem.num_spatial_orbitals
+    num_particles = problem.num_particles
 
     mapper = JordanWignerMapper()
-    qubit_op = mapper.map(total_hamiltonian)
+
+    # Get the electronic structure Hamiltonian
+    electronic_ops = problem.second_q_ops()
+    electronic_hamiltonian = electronic_ops[0] # Typically the first element
+
+    qubit_op = mapper.map(electronic_hamiltonian)
     print(f"  Qubit Hamiltonian created with {qubit_op.num_qubits} qubits.")
 
     # 2. Ansatz Setup
-    num_spatial_orbitals = mf.mo_coeff.shape[1]
-    num_particles = (mol.nelec[0], mol.nelec[1])
     hartree_fock_init_state = HartreeFock(num_spatial_orbitals, num_particles, mapper)
     ansatz = UCCSD(num_spatial_orbitals, num_particles, mapper, initial_state=hartree_fock_init_state)
     initial_point = np.zeros(ansatz.num_parameters)
@@ -184,6 +236,7 @@ def compare_optimizers(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
     # 3. Run VQE for each optimizer
     raw_results = []
     hf_energy = mf.e_tot # Classical Hartree-Fock energy for reference.
+    nuclear_repulsion_energy = problem.nuclear_repulsion_energy or 0.0
 
     for opt_name in optimizers_to_run:
         opt_settings = config.optimizers.settings.get(opt_name)
@@ -195,7 +248,8 @@ def compare_optimizers(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
 
         try:
             optimizer = get_optimizer_instance(opt_name, opt_settings)
-            vqe_energy, evaluations, runtime, vqe_result = run_vqe_simulation(qubit_op, ansatz, optimizer, initial_point)
+            vqe_electronic_energy, evaluations, runtime, vqe_result = run_vqe_simulation(qubit_op, ansatz, optimizer, initial_point)
+            vqe_total_energy = vqe_electronic_energy + nuclear_repulsion_energy
             opt_result = vqe_result.optimizer_result
 
             # Robustly check for convergence
@@ -206,7 +260,8 @@ def compare_optimizers(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
 
             raw_results.append({
                 "Optimizer": opt_name,
-                "VQE Energy": vqe_energy,
+                "VQE Energy": vqe_total_energy,
+                "HF Energy": hf_energy,
                 "Evals": evaluations,
                 "Time": runtime,
                 "Converged": converged,
@@ -219,44 +274,49 @@ def compare_optimizers(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
             print(f"  Error running VQE with {opt_name}: {e}")
             traceback.print_exc()
             raw_results.append({
-                "Optimizer": opt_name, "VQE Energy": float('inf'), "Evals": -1, "Time": float('inf'),
+                "Optimizer": opt_name, "VQE Energy": float('inf'), "HF Energy": hf_energy, "Evals": -1, "Time": float('inf'),
                 "Converged": False, "NFEV": -1, "NIT": -1, "Status": -1, "Message": "Error"
             })
 
     # 4. Create DataFrame and Add Rankings for Comparison
+    if not raw_results:
+        print("  No optimizer results to display.")
+        print("\n--- L150 Complete ---")
+        return
+
     df = pd.DataFrame(raw_results)
 
-    if not df.empty:
-        df["Energy Rank"] = df["VQE Energy"].rank(method='min')
-        df["Evals Rank"] = df["Evals"].replace(-1, float('inf')).rank(method='min')
-        df["NFEV Rank"] = df["NFEV"].replace(-1, float('inf')).rank(method='min')
-        df["NIT Rank"] = df["NIT"].replace(-1, float('inf')).rank(method='min')
-        df["Time Rank"] = df["Time"].rank(method='min')
-        df["Overall Score"] = df["Energy Rank"] + df["NFEV Rank"] + df["Time Rank"]
-        df["Overall Rank"] = df["Overall Score"].rank(method='min')
+    df["Energy Diff (VQE - HF)"] = df["VQE Energy"] - df["HF Energy"]
+    df["Energy Rank"] = df["VQE Energy"].rank(method='min')
+    df["Evals Rank"] = df["Evals"].replace(-1, float('inf')).rank(method='min')
+    df["NFEV Rank"] = df["NFEV"].replace(-1, float('inf')).rank(method='min')
+    df["NIT Rank"] = df["NIT"].replace(-1, float('inf')).rank(method='min')
+    df["Time Rank"] = df["Time"].rank(method='min')
+    df["Overall Score"] = df["Energy Rank"] + df["NFEV Rank"] + df["Time Rank"]
+    df["Overall Rank"] = df["Overall Score"].rank(method='min')
 
-        display_df = df.copy()
-        display_df["VQE Energy (H)"] = display_df["VQE Energy"].apply(lambda x: f"{x:.6f}" if x != float('inf') else "Error")
-        display_df["Time (s)"] = display_df["Time"].apply(lambda x: f"{x:.2f}" if x != float('inf') else "Error")
-        display_df["Corr. Energy (H)"] = display_df["VQE Energy"].apply(lambda x: f"{x - hf_energy:.6f}" if x != float('inf') else "Error")
+    display_df = df.copy()
+    display_df["VQE Energy (H)"] = display_df["VQE Energy"].apply(lambda x: f"{x:.6f}" if x != float('inf') else "Error")
+    display_df["Energy Diff (H)"] = display_df["Energy Diff (VQE - HF)"].apply(lambda x: f"{x:.6f}" if x != float('inf') else "Error")
+    display_df["Time (s)"] = display_df["Time"].apply(lambda x: f"{x:.2f}" if x != float('inf') else "Error")
 
-        display_df = display_df[["Optimizer", "VQE Energy (H)", "Corr. Energy (H)", "Evals", "NFEV", "NIT", "Time (s)", "Converged", "Status", "Message",
-                                 "Energy Rank", "NFEV Rank", "Time Rank", "Overall Rank"]]
+    display_df = display_df[["Optimizer", "VQE Energy (H)", "Energy Diff (H)", "Evals", "NFEV", "NIT", "Time (s)", "Converged", "Status", "Message",
+                                "Energy Rank", "NFEV Rank", "Time Rank", "Overall Rank"]]
 
-        print(f"\n\nReference Hartree-Fock Energy: {hf_energy:.6f} Hartree")
-        print("\n--- VQE Optimizer Comparison Results ---")
-        print("  Corr. Energy (H): VQE Energy - HF Energy")
-        print("  Evals: Total VQE energy evaluations (from vqe.cost_function_evals)")
-        print("  NFEV:  Number of Function Evaluations (reported by the optimizer)")
-        print("  NIT:   Number of Optimizer Iterations (reported by the optimizer)")
-        print("  Status: Optimizer termination status code (0 often means success)")
-        try:
-            print(tabulate(display_df, headers="keys", tablefmt="grid", showindex=False, maxcolwidths=[None, None, None, None, None, None, None, None, None, 15, None, None, None, None]))
-        except ImportError:
-            print("  'tabulate' library not found. Please install it for a formatted table.")
-            print(df)
-    else:
-        print("  No results to display.")
+    print(f"\n\nReference Hartree-Fock Energy: {hf_energy:.6f} Hartree")
+    print(f"Nuclear Repulsion Energy: {nuclear_repulsion_energy:.6f} Hartree")
+    print("\n--- VQE Optimizer Comparison Results ---")
+    print("  VQE Energy (H): Total Ground State Energy (Electronic + Nuclear)")
+    print("  Energy Diff (H): VQE Energy - HF Energy")
+    print("  Evals: Total VQE energy evaluations (from vqe.cost_function_evals)")
+    print("  NFEV:  Number of Function Evaluations (reported by the optimizer)")
+    print("  NIT:   Number of Optimizer Iterations (reported by the optimizer)")
+    print("  Status: Optimizer termination status code (0 often means success)")
+    try:
+        print(tabulate(display_df, headers="keys", tablefmt="grid", showindex=False, maxcolwidths=[None, None, None, None, None, None, None, None, None, 15, None, None, None, None]))
+    except ImportError:
+        print("  'tabulate' library not found. Please install it for a formatted table.")
+        print(df)
 
     print("\n--- L150 Complete ---")
 
@@ -274,6 +334,7 @@ def main():
     args = parser.parse_args()
 
     print_versions()
+    print(f"Loading configuration from: {args.config}")
     config: AppConfig = AppConfig.load_from_yaml(args.config)
 
     if args.optimizers:
@@ -299,9 +360,20 @@ def main():
     basis_labels = get_basis_labels(mol)
     plot_mo_coefficients(mo_coeffs, config.visualization, labels=basis_labels)
     num_orbitals = mo_coeffs.shape[1]
-    num_orbitals_3d = min(2, num_orbitals)
-    for i in range(num_orbitals_3d):
-        visualize_mo_3d(mol, mo_coeffs, orb_index=i, config=config.visualization)
+    # Visualize HOMO and LUMO
+    homo_index = mol.nelec[0] - 1
+    lumo_index = mol.nelec[0]
+
+    orbitals_to_plot = list(range(min(2, num_orbitals))) # First two
+    if homo_index >= 0 and homo_index < num_orbitals and homo_index not in orbitals_to_plot: orbitals_to_plot.append(homo_index)
+    if lumo_index >= 0 and lumo_index < num_orbitals and lumo_index not in orbitals_to_plot: orbitals_to_plot.append(lumo_index)
+    orbitals_to_plot = sorted(list(set(orbitals_to_plot)))
+
+    print(f"Plotting 3D orbitals for indices: {orbitals_to_plot}")
+    for i in orbitals_to_plot:
+         if i < num_orbitals:
+            visualize_mo_3d(mol, mo_coeffs, orb_index=i, config=config.visualization)
+
     print("--- L100 Complete ---")
 
     # --- L150: VQE Quantum Simulation ---

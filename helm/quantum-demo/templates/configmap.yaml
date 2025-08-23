@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "quantum-demo.fullname" . }}-config
+  namespace: {{ .Release.Namespace }} # Use .Release.Namespace
+  labels:
+    {{- include "quantum-demo.labels" . | nindent 4 }}
+data:
+  molecule_config.yaml: |
+    {{- .Values.moleculeConfigYml | nindent 4 }}
