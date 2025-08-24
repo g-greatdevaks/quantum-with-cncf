@@ -5,7 +5,8 @@
 qiskit==1.4.4
 
 # Qiskit Aer Simulator
-qiskit-aer==0.17.1
+# qiskit-aer==0.17.1
+qiskit-aer-gpu-cu11==0.17.0
 # For GPU support in Aer, potentially need matching CUDA drivers on the node
 # and sometimes 'qiskit-aer-gpu' (though often Aer auto-detects)
 

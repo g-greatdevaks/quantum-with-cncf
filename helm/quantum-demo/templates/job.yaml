@@ -10,11 +10,8 @@ spec:
   backoffLimit: {{ .Values.job.backoffLimit }}
   template:
     metadata:
-      # Keep Pod template labels minimal. The Job controller will add its own.
       labels:
         app.kubernetes.io/name: {{ include "quantum-demo.name" . }}
-        # Do NOT include app.kubernetes.io/instance here, as this can cause issues with Job updates/recreations.
-        # Do NOT include job-name here; the controller adds this to the Pods.
     spec:
       restartPolicy: Never
       automountServiceAccountToken: false
@@ -27,14 +24,27 @@ spec:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
-          command: ["python", "main.py", "--config", "/config/molecule_config.yaml"]
+          command: ["/opt/venv/bin/python", "main.py", "--config", "/config/molecule_config.yaml"]
           env:
             {{- range $key, $value := .Values.env }}
             - name: {{ $key }}
               value: {{ $value | quote }}
             {{- end }}
+            - name: MPLCONFIGDIR
+              value: "/tmp/matplotlib"
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: "compute,utility"
           resources:
-          {{- toYaml .Values.resources | nindent 12 }}
+            limits:
+              nvidia.com/gpu: 1
+              ephemeral-storage: "30Gi" # Limit ephemeral storage
+            requests:
+              cpu: "1"
+              memory: "2Gi"
+              nvidia.com/gpu: 1
+              ephemeral-storage: "20Gi" # Request ephemeral storage
           volumeMounts:
             - name: config-volume
               mountPath: /config
@@ -47,6 +57,8 @@ spec:
             name: {{ include "quantum-demo.fullname" . }}-config
         - name: outputs-volume
           emptyDir: {}
+            # Optional: You can set a size limit on the emptyDir itself
+            # sizeLimit: 5Gi
       {{- with .Values.nodeSelector }}
       nodeSelector:
       {{- toYaml . | nindent 8 }}

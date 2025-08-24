@@ -1,50 +1,58 @@
-# ---- Builder Stage ----
-FROM python:3.13.3-slim-bookworm AS builder
-
-# Install system dependencies for building wheels
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libblas-dev \
-    liblapack-dev \
-    libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Create a virtual environment
-ENV VENV_PATH=/opt/venv
-RUN python -m venv $VENV_PATH
-ENV PATH="$VENV_PATH/bin:$PATH"
-
-# Copy requirements and install into the virtual environment
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
-
 # ---- Final Stage ----
-FROM python:3.13.3-slim-bookworm
+# Purpose: Run the application with CUDA support
+FROM nvidia/cuda:12.5.1-devel-ubuntu22.04
 
 WORKDIR /app
 
-# Install runtime system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgomp1 \
-    && rm -rf /var/lib/apt/lists/*
+# Set non-interactive frontend for apt commands
+ENV DEBIAN_FRONTEND=noninteractive
 
-# Copy the virtual environment from the builder stage
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    wget \
+    gnupg \
+    ca-certificates \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3.13 \
+        python3.13-dev \
+        python3.13-venv \
+        build-essential \
+        libgomp1 \
+    && apt-get remove -y software-properties-common wget gnupg \
+    && apt-get autoremove -y \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /etc/apt/sources.list.d/deadsnakes*
+
+# Make python3.13 the default python3
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.13 1
+
+# Install pip for Python 3.13 using ensurepip
+RUN python3 -m ensurepip --upgrade
+
+# Upgrade pip and install setuptools and wheel
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Create virtual environment
 ENV VENV_PATH=/opt/venv
-COPY --from=builder $VENV_PATH $VENV_PATH
+RUN python3 -m venv $VENV_PATH
 ENV PATH="$VENV_PATH/bin:$PATH"
+
+# Copy requirements and install into the venv
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the application code
 COPY . .
 
-# Create the outputs directory
-RUN mkdir -p outputs
-
-# **NEW: Change ownership of the app directory to the non-root user**
-# User 1000, Group 1000 is what's set in job.yaml's securityContext
-RUN chown -R 1000:1000 /app
-
-# **NEW: Ensure scripts are executable**
+# Change ownership and permissions
+RUN chown -R 1000:1000 /app && chown -R 1000:1000 /opt/venv
 RUN chmod +x /app/main.py
 
-# Command to run the application IN THE CONTAINER
-CMD ["python", "main.py", "--config", "/config/molecule_config.yaml"]
+# Switch to the non-root user
+USER 1000
+
+# Execute using the venv python
+CMD ["/opt/venv/bin/python", "main.py", "--config", "/config/molecule_config.yaml"]
