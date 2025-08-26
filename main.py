@@ -1,15 +1,14 @@
 """
 Main script for the Molecular Orbital Visualization and Quantum Simulation Demo.
-KubeCon EU 2025 - Quantum Curious: Your Cloud-Native Launchpad
 
 This script demonstrates a hybrid classical-quantum workflow:
 
-L100: Classical Chemistry Visualization
+Classical Chemistry Visualization
       - Uses PySCF to calculate molecular orbitals (MOs) for a given molecule.
       - Visualizes MO coefficients and 3D orbital shapes.
       This stage is purely classical.
 
-L150: Local Quantum Simulation with VQE
+Local Quantum Simulation with VQE
       - Employs the Variational Quantum Eigensolver (VQE) algorithm to find the
         ground state energy of the molecule.
       - Maps the molecule's electronic Hamiltonian to a qubit Hamiltonian.
@@ -18,7 +17,7 @@ L150: Local Quantum Simulation with VQE
       - Runs on a local classical simulator (Qiskit Aer).
       This stage introduces quantum computation concepts.
 
-L200: Containerized Quantum Simulation on Kubernetes
+Containerized Quantum Simulation on Kubernetes
       - This script can be run inside a Docker container.
       - Qiskit Aer simulator can be configured to use GPU if available on the node
         by setting the environment variable APP_SIMULATOR_DEVICE="GPU".
@@ -203,7 +202,7 @@ def get_optimizer_instance(name: str, settings: OptimizerSettings):
 
 def compare_optimizers(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mole, mf: pyscf.scf.hf.RHF, optimizers_to_run: list):
     """
-    L150: Runs VQE with different classical optimizers and compares their performance.
+    Runs VQE with different classical optimizers and compares their performance.
 
     This function sets up the quantum problem (Hamiltonian and Ansatz) and then
     iterates through the specified list of optimizers, running a full VQE
@@ -216,7 +215,7 @@ def compare_optimizers(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
         mf (scf.hf.RHF): The PySCF Hartree-Fock result object.
         optimizers_to_run (list): A list of optimizer names to test.
     """
-    print("\n--- Starting L150: VQE Optimizer Comparison ---")
+    print("\n--- Starting VQE Optimizer Comparison ---")
     output_dir = Path(config.visualization.output_dir)
 
     # 1. Setup the quantum problem
@@ -327,15 +326,15 @@ def compare_optimizers(driver: PySCFDriver, config: AppConfig, mol: pyscf.gto.Mo
     else:
         print("  No results to display.")
 
-    print("\n--- L150 Complete ---")
+    print("\n--- Optimizer Comparison Complete ---")
 
 def main():
     """
     Main execution function:
     - Parses command line arguments.
     - Loads configuration.
-    - Runs L100 classical chemistry steps.
-    - Runs L150 VQE optimizer comparison.
+    - Runs classical chemistry steps.
+    - Runs VQE optimizer comparison.
     """
     parser = argparse.ArgumentParser(description="KubeCon Quantum Chemistry Demo")
     parser.add_argument("--config", default="molecule_config.yaml", help="Path to YAML configuration file")
@@ -356,7 +355,7 @@ def main():
     print(f"Outputs will be saved to: {output_dir.resolve()}")
 
     # --- L100: Classical Calculations & Visualization ---
-    print("\n--- Starting L100: Classical Calculations & Visualization ---")
+    print("\n--- Starting Classical Calculations & Visualization ---")
     driver = get_pyscf_driver(config.molecule)
     try:
         mol, mf = run_pyscf_calculation(driver)
@@ -377,7 +376,7 @@ def main():
     for i in orbitals_to_plot:
          if i >= 0 and i < num_orbitals:
             visualize_mo_3d(mol, mo_coeffs, orb_index=i, config=config.visualization)
-    print("--- L100 Complete ---")
+    print("--- Visualizations Complete ---")
 
     # --- L150: VQE Quantum Simulation ---
     compare_optimizers(driver, config, mol, mf, optimizers_to_run=config.optimizers.run)

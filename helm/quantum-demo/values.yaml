@@ -1,7 +1,7 @@
 image:
-  repository: us-central1-docker.pkg.dev/aks-signifyd-service-00-f29d/kubecon-quantum-repo/quantum-demo # Replace
+  repository: "<container-image-repository>""
   pullPolicy: Always
-  tag: "l200-cuda-v5"
+  tag: "l200"
 
 # This value is used to ensure resources are targeted to the correct namespace,
 # which is created by the --namespace and --create-namespace flags in the helm command.
